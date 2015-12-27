@@ -1,0 +1,158 @@
+---
+title: "Practical Machine Learning Project"
+author: "meisin"
+date: "Sunday, December 27, 2015"
+output: html_document
+---
+## Background and Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we will use data recorded from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+More information is available from the website http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The goal of this project is to predict the manner in which the participants did the exercise. This is the classe variable of the training set, which classifies the correct and incorrect outcomes into A, B, C, D, and E categories. This report describes how the model for the project was built, its cross validation, expected out of sample error calculation, and the choices made. It was used successfully to accurately predict all 20 different test cases on the Coursera website.
+
+## Data Sources
+
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source:
+http://groupware.les.inf.puc-rio.br/har
+
+First the data (both training and testing) were downloaded and then read into R. 
+
+```{r}
+setwd("C:/Users/johnsee/Documents/meisin/Data science/Course #8 Practical Machine Learning/Project")   # or any directory of your choice
+testing<-read.csv(file="pml-testing.csv",head=TRUE,sep=",")
+training<-read.csv(file="pml-training.csv",head=TRUE,sep=",")
+```
+
+Then simple data exploratory analysis was conducted to understand the data.
+
+```{r}
+dim(training)
+table(training$classe)
+```
+
+## Data Preparation and Processing
+With `r ncol(training)` columns, we need to reduce the number of variables in order to build a meaningful model within a reasonable duration. 
+
+1. First load the relevant libraries.
+```{r}
+library(pROC)
+library(caret)
+library(kernlab)
+library(ggplot2)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+```
+
+2. Columns with mostly 'NAs' are removed.
+```{r}
+## removing all columns that are mostly NA: 
+is_data  <- apply(!is.na(training), 2, sum) > 19621  # which is the number of observations
+training <- training[, is_data]
+```
+
+3. "Zero covariates" are identified and removed from the training set.
+```{r}
+nzv_cols <- nearZeroVar(training)
+if(length(nzv_cols) > 0) 
+  training <- training[, -nzv_cols]
+```
+
+4. First 6 columns were removed as they are just for information and doesn't contribute to training and prediction of the data.
+
+```{r}
+training <- training[, 7:59]
+dim(training)
+```
+
+5. Now that the number of variables are reduced to `r ncol(training)`, we can now split the data into training and testing sets.
+```{r}
+inTrain <- createDataPartition(y=training$classe, p=0.60, list=FALSE)
+myTraining  <- training[inTrain,]
+myTesting  <- training[-inTrain,]
+```
+
+## Prediction with Decision Tree
+With the data cleaned and pre-processed, we are now ready to build the model and prediction with Decision Tree.
+
+1. Train
+``` {r}
+set.seed(3141592)
+modelFit1 <- train(classe ~ ., method="rpart", data=myTraining)
+fancyRpartPlot(modelFit1$finalModel)
+```
+2. Predict
+With the model, we now use it to predict on the testing set:
+```{r}
+predictions1 <- predict(modelFit1, newdata=myTesting)
+confusionMat1 <- confusionMatrix(predictions1, myTesting$classe)
+confusionMat1
+```
+With the results above, we are able to calculate the **out-of-sample error rate** for prediction using Decision Tree.
+```{r}
+missClass = function(values, predicted) {
+  sum(predicted != values) / length(values)
+}
+OOS_errRate = missClass(myTesting$classe, predictions1)
+OOS_errRate
+```
+
+Although training of Decision Tree run rather fast, but the results are not ideal. With the accuracy level of 49% and out-of-sample error rate of 0.508, it is not a very acceptable model.
+
+## Prediction with Random Forest
+Now we will explore using Random Forest instead. 
+1. Train
+```{r}
+set.seed(3141592)
+modelFit <- train(classe ~.,
+                data = myTraining,
+                method="rf",
+                trControl = trainControl(method = "cv", number = 2),
+                prox = TRUE,
+                allowParallel = TRUE)
+```
+2. Predict
+```{r}
+predictions <- predict(modelFit, newdata=myTesting)
+confusionMat <- confusionMatrix(predictions, myTesting$classe)
+confusionMat
+```
+The accuracy of prediction with **Random Forest** is so much better - at 99.2%, which is more superior than the accuracy we obtained from **Decision Tree**. However, the training of random forest requires a much longer time to execute.
+
+To further confirmed, here is the **Out-of-sample error rate** for the prediction with Random Forest.
+```{r}
+missClass = function(values, predicted) {
+  sum(predicted != values) / length(values)
+}
+OOS_errRate = missClass(myTesting$classe, predictions)
+OOS_errRate
+```
+
+## Final prediction and results submission
+With the Random Forest model, we use it to make predictions of the original Testing set (with 20 test cases). The prediction results were written into text files and subsequently submited to Coursera course page.
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:20){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+finalPrediction <- predict(modelFit, newdata=testing)
+pml_write_files(finalPrediction)
+```
+
+## Conclusion
+From the results above, we can conclude that Random Forest is better at producing accurate predictions as compared to decision Trees. 
